@@ -7,6 +7,8 @@ npm install
  
 tsc
 node build/main.js -i "imageUrl"
+# or
+npm run build -- "imageUrl"
 
 ```
 
