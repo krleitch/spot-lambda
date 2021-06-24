@@ -1,29 +1,13 @@
-const { argv } = require("yargs")
-  .scriptName("main.js")
-  .usage("Usage: $0 -i imageURL")
-  .example(
-    "$0 -i 'https://myImage.png'",
-    "Use nsfwJs to test the image at imageURL"
-  )
-  .option("i", {
-    alias: "image",
-    describe: "Image location as a URL",
-    demandOption: "An imageURL is required",
-    type: "string",
-  });
-
 const axios = require('axios');
 const nsfw = require('nsfwjs');
 const tf = require('@tensorflow/tfjs-node');
 
-let model: any;
-
 //  predict if image is nsfw
-async function predictNsfw(imageURL: string): Promise<boolean> {
+async function predictNsfw(model: any, imageURL: string): Promise<Object> {
 
     // if the model was not loaded
     if ( !model || !imageURL ) {
-        return false;
+        return {};
     }
 
     // get the image
@@ -33,8 +17,7 @@ async function predictNsfw(imageURL: string): Promise<boolean> {
             responseType: 'arraybuffer',
         });
     } catch (err) {
-        console.log('Error getting image');
-        return false;
+        return {};
     }
 
     // Image must be in tf.tensor3d format
@@ -45,29 +28,49 @@ async function predictNsfw(imageURL: string): Promise<boolean> {
         image = await tf.node.decodeImage(pic.data,3);
         predictions = await model.classify(image);
     } catch (err) {
-        console.log('Error classifying image');
-        return false;
+        return {};
     }
 
     // Tensor memory must be managed explicitly (it is not sufficient to let a tf.Tensor go out of scope for its memory to be released).
     image.dispose(); 
     
     // check if porn or hentai
-    return predictions[0].className === 'Porn' || predictions[0].className === 'Hentai';
+    // return predictions[0].className === 'Porn' || predictions[0].className === 'Hentai';
+    return predictions[0];
     
 }
 
-const { image } = argv;
+// S3 Bucket
+const MODEL_URL = `https://nsfw-image-model.s3.amazonaws.com/nsfwModel/`;
+// Local Model
+// const MODEL_URL = `file://${__dirname}/nsfwModel/`
 
-nsfw.load(`file://${__dirname}/nsfwModel/`).then((m: any) => {
-    console.log('Nsfwjs Model Loaded');
-    model = m;
-    return predictNsfw(image).then( (result: boolean) => {
-        console.log('Image nsfw result: ', result)
-        return result;
-    }, (err: any) => {
-        console.log('Error predicting image', err)
-    });
-}, (err: any) => {
-    console.log('Error loading tensorflow model')
-});
+exports.lambdaHandler = async (event: any) => {
+
+    if ( !event.image ) {
+        return {
+            message: 'image is required',
+            statusCode: 500
+        }
+    }
+
+    const imageURL = event.image;
+    let predictions;
+    let model;
+
+    try {
+        model = await nsfw.load(MODEL_URL);
+        predictions = await predictNsfw(model, imageURL);
+    } catch (err) {
+        return {
+            message: err.toString(),
+            statusCode: 500
+        }
+    }
+
+    return {
+        statusCode: 200,
+        body: JSON.stringify(predictions)
+    }
+
+}
